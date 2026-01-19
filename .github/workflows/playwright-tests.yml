@@ -1,0 +1,74 @@
+name: Playwright Microsoft Login Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * *' # Daily at midnight UTC
+
+jobs:
+  test:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Install Playwright Browsers
+      run: npx playwright install --with-deps ${{ matrix.browser }}
+      
+    - name: Create .env file
+      run: |
+        echo "CRM_BASE_URL=${{ secrets.CRM_BASE_URL }}" >> .env
+        echo "MS_TEST_EMAIL=${{ secrets.MS_TEST_EMAIL }}" >> .env
+        echo "MS_TEST_PASSWORD=${{ secrets.MS_TEST_PASSWORD }}" >> .env
+        echo "MS_DISABLED_EMAIL=${{ secrets.MS_DISABLED_EMAIL }}" >> .env
+        echo "AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}" >> .env
+        echo "AZURE_CLIENT_ID=${{ secrets.AZURE_CLIENT_ID }}" >> .env
+        echo "HEADLESS=true" >> .env
+        echo "TIMEOUT=30000" >> .env
+        echo "CI=true" >> .env
+    
+    - name: Run Playwright tests
+      run: npx playwright test --project=${{ matrix.browser }}
+      
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: playwright-report-${{ matrix.browser }}
+        path: playwright-report/
+        retention-days: 30
+        
+    - name: Upload test videos and traces
+      uses: actions/upload-artifact@v3
+      if: failure()
+      with:
+        name: test-failures-${{ matrix.browser }}
+        path: test-results/
+        retention-days: 7
+        
+    - name: Upload test summary
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results-json-${{ matrix.browser }}
+        path: test-results/results.json
+        retention-days: 30
