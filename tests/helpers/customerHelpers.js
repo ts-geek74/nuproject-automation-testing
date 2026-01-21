@@ -115,24 +115,32 @@ export async function verifySorting(page, columnIndex, expectedOrder = 'asc') {
 /**
  * Open RFM filter and select a segment.
  */
-/**
- * Open RFM filter and select a segment.
- */
 export async function filterByRFM(page, segment) {
     console.log(`Filtering by RFM segment: ${segment}`);
-    const filterBtn = page.getByRole('button', { name: /RFM/ }).first();
-    await filterBtn.click();
 
-    // Wait for popover
+    // Retry logic to ensure menu opens
+    const filterBtn = page.getByRole('button', { name: 'RFM' }).first(); // Using simple locator as per user
     const popover = page.locator('div[role="dialog"], div[role="menu"], .popover-content').first();
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+        await filterBtn.click({ force: true });
+        try {
+            await expect(popover).toBeVisible({ timeout: 2000 });
+            break;
+        } catch (e) {
+            console.log(`Attempt ${attempt + 1}: RFM menu did not open, retrying...`);
+            await page.waitForTimeout(500);
+        }
+    }
     await expect(popover).toBeVisible();
 
-    // Click the specific segment option
-    await popover.getByRole('option', { name: segment, exact: true }).click();
+    const option = popover.getByRole('option', { name: segment }).first();
+    if (await option.count() > 0) {
+        await option.click({ force: true });
+    } else {
+        await popover.getByText(segment).first().click({ force: true });
+    }
 
-    // Clicking the option usually closes the menu or we might need to click outside. 
-    // The user script suggests simply clicking the new button name or clear filters next.
-    // We'll wait for the table to refresh.
     await waitForCustomersTable(page);
 }
 
@@ -149,10 +157,9 @@ export async function verifyRFMTableContent(page, segment) {
         return;
     }
 
-    // Check first few rows to save time
     const checkCount = Math.min(count, 10);
     for (let i = 0; i < checkCount; i++) {
-        const rfmCellText = await rows.nth(i).locator('td').nth(1).innerText(); // Column 1 is RFM
+        const rfmCellText = await rows.nth(i).locator('td').nth(1).innerText();
         if (!rfmCellText.includes(segment)) {
             throw new Error(`Row ${i} does not contain segment '${segment}'. Found: '${rfmCellText}'`);
         }
@@ -164,12 +171,39 @@ export async function verifyRFMTableContent(page, segment) {
  */
 export async function clearRFMFilter(page) {
     console.log('Clearing RFM filter...');
-    // The button name might have changed to include the filter (e.g., 'RFM Champions')
-    const filterBtn = page.getByRole('button', { name: /RFM/ }).first();
-    await filterBtn.click();
 
+    // When active, button matches /RFM/ (e.g. 'RFM No Sales')
+    // We try to find the button that is NOT the plain 'RFM' if possible, or just the first one.
+    // User codegen used .name('RFM No Sales').click()
+    // We'll use the generic regex but with retry.
+
+    const filterBtn = page.getByRole('button', { name: /RFM/ }).first();
     const popover = page.locator('div[role="dialog"], div[role="menu"], .popover-content').first();
-    await popover.getByRole('option', { name: 'Clear filters' }).click();
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+        await filterBtn.click({ force: true });
+        try {
+            await expect(popover).toBeVisible({ timeout: 2000 });
+            // Should contain "Clear filters"
+            if (await popover.getByRole('option', { name: 'Clear filters' }).count() > 0) {
+                break;
+            }
+            console.log("Popover opened but 'Clear filters' not found? Retrying...");
+        } catch (e) {
+            console.log(`Attempt ${attempt + 1}: RFM menu (clear) did not open, retrying...`);
+            await page.waitForTimeout(500);
+        }
+    }
+
+    const clearOption = popover.getByRole('option', { name: 'Clear filters' });
+    if (await clearOption.isVisible()) {
+        await clearOption.click({ force: true });
+    } else {
+        // Fallback: click outside if we can't clear (fail safe)
+        await page.mouse.click(0, 0);
+    }
 
     await waitForCustomersTable(page);
+    // Explicit wait for reset
+    await expect(page.getByRole('button', { name: /RFM/ }).first()).toHaveText('RFM', { timeout: 10000 });
 }

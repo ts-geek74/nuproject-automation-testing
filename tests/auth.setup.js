@@ -27,23 +27,26 @@ setup('authenticate', async ({ page }) => {
     await loginButton.click();
 
     // Wait for the app to load
-    console.log('Waiting for sidebar...');
+
     await expect(page.getByLabel('Toggle Sidebar')).toBeVisible({ timeout: 40000 });
 
     // Important: Wait for data on a page before saving state to ensure session is fully settled
-    console.log('Warming up stores page...');
+
     await page.goto('https://app.omnigrowthos.io/stores');
 
-    // Wait for the "No results." to NOT be the only thing, or for actual cells to appear
-    await page.waitForFunction(() => {
-        const rows = document.querySelectorAll('tbody tr');
-        if (rows.length === 0) return false;
-        const cells = rows[0].querySelectorAll('td');
-        if (cells.length < 2) return false;
-        const text = cells[0].innerText.trim();
-        return text !== '' && !text.includes('No results.');
-    }, { timeout: 40000 }).catch(e => console.log('Warning: No data seen during setup warmup, but proceeding...'));
+    // Wait for the "Rows per page" text which indicates the table pagination is loaded
+    await page.waitForSelector('text=Rows per page', { timeout: 40000 });
 
-    console.log('Saving storage state.');
+
+    // Wait for actual store data - look for the "View on BattleMap" or "View on Google Map" text
+    await page.locator('text=View on BattleMap').first().waitFor({ timeout: 40000 });
+
+
+    // Give it an extra moment for any final lazy-loaded content
+    await page.waitForTimeout(1500);
+
+
     await page.context().storageState({ path: authFile });
+
+
 });
