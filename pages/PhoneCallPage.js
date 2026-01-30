@@ -32,8 +32,8 @@ class PhoneCallPage {
         this.attachStoreButton = page.getByRole('button', { name: '+ Attach Store' });
         this.changeStoreButton = page.getByRole('button', { name: 'Change Store' });
         this.viewDetailsButton = page.getByRole('button', { name: 'View Details' });
-        this.deleteIcon = page.getByRole('button').filter({ hasText: /^$/ }).nth(1);
-        this.deleteConfirmButton = page.getByRole('button', { name: 'Delete' });
+        this.deleteIcon = page.locator('tbody tr').locator('button.text-destructive');
+        this.deleteConfirmButton = page.getByRole('dialog').getByRole('button', { name: 'Delete' });
 
         // Change/Attach Store Modal
         this.storeDrawer = page.locator('div[role="dialog"], .side-drawer, [data-state="open"]').last();
@@ -310,36 +310,51 @@ class PhoneCallPage {
             const rowData = await this.getRowData(rowIndex);
 
             const deleteBtn = this.deleteIcon.nth(rowIndex);
+            await deleteBtn.scrollIntoViewIfNeeded().catch(() => {});
             await deleteBtn.waitFor({ state: 'visible', timeout: 5000 });
             await deleteBtn.click();
 
-            // Wait for confirmation dialog
-            await this.deleteConfirmButton.waitFor({ state: 'visible', timeout: 5000 });
+            // Wait for confirmation dialog and click Delete
+            await this.deleteConfirmButton.waitFor({ state: 'visible', timeout: 7000 });
             await this.deleteConfirmButton.click();
 
-            // Wait for success message or row count change
-            const messageVisible = await this.waitForSuccessMessage(5000);
+            // Wait for modal to close
+            await this.deleteConfirmButton.waitFor({ state: 'hidden', timeout: 10000 }).catch(() => {});
 
+            // Wait for delete success message
+            const deleteMessage = await this.deleteSuccessMessage.textContent({ timeout: 7000 }).catch(() => null);
+            
             // Wait for table to update
-            await this.page.waitForTimeout(2000);
-            await this.waitForTableReady();
+            await this.page.waitForTimeout(3000);
+            await this.waitForTableReady(15000);
 
             const rowCountAfter = await this.tableRows.count();
+            const currentRowData = await this.getRowData(rowIndex);
 
-            // Verify deletion
-            const deleted = rowCountAfter < rowCountBefore ||
-                await this.page.getByText('No results.').isVisible().catch(() => false);
+            // Verify deletion: either row count decreased OR data in that row changed (pagination)
+            const rowCountDecreased = rowCountAfter < rowCountBefore;
+            const tableNowEmpty = rowCountAfter === 0;
+            const dataChanged = currentRowData?.date !== rowData?.date || 
+                                currentRowData?.creator !== rowData?.creator ||
+                                currentRowData?.store !== rowData?.store;
 
-            if (!deleted && !messageVisible) {
-                throw new Error('Delete operation may have failed - no confirmation');
+            const deleted = rowCountDecreased || tableNowEmpty || dataChanged || !!deleteMessage;
+
+            if (!deleted) {
+                throw new Error('Delete operation failed - row count unchanged and data still present');
             }
 
-            console.log(`Delete successful: ${rowCountBefore} -> ${rowCountAfter} rows`);
+            console.log(`Delete operation result: rowCountDecreased=${rowCountDecreased}, dataChanged=${dataChanged}, message=${deleteMessage}`);
+            
             return {
                 success: true,
                 deletedData: rowData,
                 rowCountBefore,
-                rowCountAfter
+                rowCountAfter,
+                rowsDecreased: rowCountDecreased,
+                tableEmpty: tableNowEmpty,
+                dataChanged,
+                messageShown: deleteMessage
             };
         } catch (error) {
             console.error('Delete failed:', error.message);
@@ -969,6 +984,77 @@ class PhoneCallPage {
             noResultsMessage: noResults,
             rowCount
         };
+    }
+
+    /**
+     * Check if delete option is available for a row
+     */
+    async isDeleteAvailable(rowIndex = 0) {
+        try {
+            const tableData = await this.hasTableData();
+            if (!tableData.hasData) {
+                return { available: false, reason: 'Table is empty' };
+            }
+
+            const rowCount = await this.tableRows.count();
+            if (rowIndex >= rowCount) {
+                return { available: false, reason: `Row index ${rowIndex} out of bounds (total rows: ${rowCount})` };
+            }
+
+            const row = this.tableRows.nth(rowIndex);
+            await row.scrollIntoViewIfNeeded().catch(() => {});
+            
+            // Try different possible locators for the delete button
+            const deleteLocators = [
+                row.locator('button.text-destructive'), // Specific class found in inspection
+                row.locator('button:has(svg.lucide-trash2)'), // Specific icon found in inspection
+                row.locator('td').last().locator('button') // Last cell in row (usually actions)
+            ];
+
+            let deleteBtn = null;
+            for (const locator of deleteLocators) {
+                if (await locator.count() > 0) {
+                    deleteBtn = locator;
+                    break;
+                }
+            }
+            
+            if (!deleteBtn) {
+                // Try scrolling more specifically
+                await this.page.evaluate(() => window.scrollBy(0, 300));
+                await row.scrollIntoViewIfNeeded().catch(() => {});
+                await this.page.waitForTimeout(1000);
+
+                for (const locator of deleteLocators) {
+                    if (await locator.count() > 0) {
+                        deleteBtn = locator;
+                        break;
+                    }
+                }
+            }
+            
+            if (!deleteBtn) {
+                return { available: false, reason: 'Delete button not found in DOM after scrolling' };
+            }
+
+            // Now check visibility
+            await deleteBtn.scrollIntoViewIfNeeded().catch(() => {});
+            const isVisible = await deleteBtn.isVisible({ timeout: 5000 }).catch(() => false);
+            
+            if (!isVisible) {
+                return { available: false, reason: 'Delete button found in DOM but not visible' };
+            }
+
+            const isEnabled = await deleteBtn.isEnabled().catch(() => false);
+            
+            return { 
+                available: isEnabled, 
+                reason: isEnabled ? 'Delete button is available' : 'Delete button is disabled' 
+            };
+        } catch (error) {
+            console.error('Error checking delete availability:', error.message);
+            return { available: false, error: error.message, reason: 'Error checking availability' };
+        }
     }
 }
 

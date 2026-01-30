@@ -415,7 +415,7 @@ test.describe('Battle Map Module Suite', () => {
         }
         await expect(battleMapPage.drawNewClusterButton).toBeVisible();
 
-        await battleMapPage.drawNewClusterButton.click();
+        await battleMapPage.drawNewClusterButton.click({ force: true });
         // Use points verified in the user's locators script to ensure valid polygon creation
         const points = [
             { x: 509, y: 147 },
@@ -472,7 +472,6 @@ test.describe('Battle Map Module Suite', () => {
         const title = sharedPage['lastClusterTitle'] || 'TestCluster'; // Fallback to a known title or generic
         await battleMapPage.filtersButton.click();
 
-        // Open the suggestion and write the name of cluster as per user request
         await battleMapPage.customClusterFilterTrigger.click();
         await sharedPage.getByPlaceholder('Search custom cluster...').fill(title);
         await sharedPage.getByText(title).click();
@@ -481,7 +480,7 @@ test.describe('Battle Map Module Suite', () => {
         await sharedPage.getByRole('button', { name: 'View Cluster Details' }).click();
         await expect(sharedPage.getByRole('heading', { name: title }).first()).toBeVisible();
 
-        // BM-031 part: Edit details
+        // Edit details
         await sharedPage.getByRole('button', { name: 'Edit Details' }).click();
         await battleMapPage.clusterDescriptionInput.fill('Updated Desc');
 
@@ -500,10 +499,9 @@ test.describe('Battle Map Module Suite', () => {
     });
 
     test('BM-032 | Customer Cluster | Enable and View customer clusters', async () => {
-        // First navigate to Orlando as requested
-        await battleMapPage.navigateToCity('Orlando, FL');
+        await battleMapPage.orlandoButton.click();
+        await sharedPage.waitForTimeout(3000);
 
-        // Zoom out to see cluster circles better
         await battleMapPage.zoomOutButton.click();
         await sharedPage.waitForTimeout(1000);
         await battleMapPage.zoomOutButton.click();
@@ -726,7 +724,8 @@ test.describe('Battle Map Module Suite', () => {
             
             // Apply Chain Filter from user script
             await sharedPage.getByRole('combobox').filter({ hasText: 'Search chain...' }).click();
-            await sharedPage.getByRole('option', { name: 'TOTAL WINE' }).click();
+            await sharedPage.getByPlaceholder('Search chain...').fill('total wine');
+            await sharedPage.getByRole('option', { name: 'Total Wine' }).click();
             
             await battleMapPage.applyChangesButton.click({ force: true });
             await sharedPage.waitForTimeout(5000);
@@ -795,16 +794,33 @@ test.describe('Battle Map Module Suite', () => {
 
     test('BM-050 | Map Style | Switch map style', async () => {
         await battleMapPage.mapStyleCombobox.click();
+        
+        // Ensure we wait for the satellite style or tiles to be requested
+        const satellitePromise = sharedPage.waitForResponse(resp => 
+            resp.url().includes('satellite') && resp.status() === 200,
+            { timeout: 15000 }
+        ).catch(() => null);
+
         await sharedPage.getByRole('option', { name: 'Satellite' }).click();
-        await sharedPage.waitForTimeout(1000);
+        await satellitePromise;
+        await sharedPage.waitForTimeout(2000); // Wait for canvas to render
     });
 
     test('BM-051 | Map Style | Verify style persistence', async () => {
         await sharedPage.reload();
         await expect(battleMapPage.mapStyleCombobox).toContainText('Satellite');
+        
         // Reset to Streets
         await battleMapPage.mapStyleCombobox.click();
+        
+        const streetsPromise = sharedPage.waitForResponse(resp => 
+            (resp.url().includes('streets') || resp.url().includes('vector')) && resp.status() === 200,
+            { timeout: 15000 }
+        ).catch(() => null);
+
         await sharedPage.getByRole('option', { name: 'Streets' }).click();
+        await streetsPromise;
+        await sharedPage.waitForTimeout(2000);
     });
 
     test('BM-052 | Reset | Reset layers & filters', async () => {
